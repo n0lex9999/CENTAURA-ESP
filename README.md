@@ -1,6 +1,6 @@
 # CENTAURION SCRIPT
 
-**CENTAURION SCRIPT** is a lightweight and efficient Lua-based cheat script for the roblox game `CENTAURA`.
+**CENTAURION SCRIPT** is a lightweight and efficient Lua-based cheat script for the roblox game [CENTAURA](https://www.roblox.com/fr/games/8735521924/CENTAURA).
 
 ---
 
