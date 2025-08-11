@@ -1,0 +1,679 @@
+-- Enemy ESP + AimBot LocalScript
+-- Place this as a LocalScript in StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = Workspace.CurrentCamera
+
+-- Variables
+local isESPEnabled = false
+local isAimBotEnabled = false
+local aimBotKey = Enum.KeyCode.Q
+local aimBotPart = "Head" -- Peut être changé en "HumanoidRootPart" ou autre
+local aimBotFOV = 100 -- Champ de vision en studs
+local aimBotSmoothness = 0.2 -- Douceur du mouvement (0 = instantané, 1 = très lent)
+local glowColor = Color3.fromRGB(255, 0, 0)
+local glowTransparency = 0.2
+local showNames = true
+local showDistance = true
+local showHealth = true
+local showBoxes = false
+local showTracers = false
+local maxDistance = 1000
+local glowIntensity = 1
+local outlineThickness = 1
+
+local highlights = {}
+local infoLabels = {}
+local boxes = {}
+local tracers = {}
+local target = nil
+
+-- Create ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "EnemyESP"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Main Frame - Dark and Simple
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 300, 0, 350) -- Augmenté pour les nouvelles options
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -175)
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+-- Title Bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.Position = UDim2.new(0, 0, 0, 0)
+titleBar.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 1, 0)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Enemy ESP + AimBot"
+title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.TextSize = 16
+title.Font = Enum.Font.Code
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+-- Close Button
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 25, 0, 25)
+closeButton.Position = UDim2.new(1, -28, 0, 2.5)
+closeButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+closeButton.BorderSizePixel = 1
+closeButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeButton.TextSize = 14
+closeButton.Font = Enum.Font.Code
+closeButton.Parent = titleBar
+
+-- Content Frame
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -40)
+contentFrame.Position = UDim2.new(0, 10, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+-- Fonction pour créer des éléments d'interface réutilisables
+local function createToggleFrame(name, yPosition, defaultValue, callback)
+    local toggleFrame = Instance.new("Frame")
+    toggleFrame.Size = UDim2.new(1, 0, 0, 30)
+    toggleFrame.Position = UDim2.new(0, 0, 0, yPosition)
+    toggleFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    toggleFrame.BorderSizePixel = 1
+    toggleFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+    toggleFrame.Parent = contentFrame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 1, 0)
+    label.Position = UDim2.new(0, 5, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(180, 180, 180)
+    label.TextSize = 14
+    label.Font = Enum.Font.Code
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = toggleFrame
+
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(0, 50, 0, 20)
+    toggleButton.Position = UDim2.new(1, -55, 0.5, -10)
+    toggleButton.BackgroundColor3 = defaultValue and Color3.fromRGB(20, 40, 20) or Color3.fromRGB(30, 30, 30)
+    toggleButton.BorderSizePixel = 1
+    toggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+    toggleButton.Text = defaultValue and "ON" or "OFF"
+    toggleButton.TextColor3 = defaultValue and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    toggleButton.TextSize = 12
+    toggleButton.Font = Enum.Font.Code
+    toggleButton.Parent = toggleFrame
+
+    toggleButton.MouseButton1Click:Connect(function()
+        local newValue = not defaultValue
+        defaultValue = newValue
+        toggleButton.Text = newValue and "ON" or "OFF"
+        toggleButton.TextColor3 = newValue and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+        toggleButton.BackgroundColor3 = newValue and Color3.fromRGB(20, 40, 20) or Color3.fromRGB(30, 30, 30)
+        callback(newValue)
+    end)
+
+    return toggleFrame
+end
+
+-- ESP Toggle
+createToggleFrame("Enable ESP", 0, isESPEnabled, function(value)
+    isESPEnabled = value
+    updateESP()
+    statusLabel.Text = isESPEnabled and "ESP: Enabled" or "ESP: Disabled"
+    statusLabel.TextColor3 = isESPEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+end)
+
+-- AimBot Toggle
+createToggleFrame("Enable AimBot", 30, isAimBotEnabled, function(value)
+    isAimBotEnabled = value
+    statusLabel.Text = isAimBotEnabled and "AimBot: Enabled (Press "..tostring(aimBotKey)..")" or "AimBot: Disabled"
+    statusLabel.TextColor3 = isAimBotEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+end)
+
+-- Options d'affichage
+createToggleFrame("Show Names", 60, showNames, function(value)
+    showNames = value
+    updateESP()
+end)
+
+createToggleFrame("Show Distance", 90, showDistance, function(value)
+    showDistance = value
+    updateESP()
+end)
+
+createToggleFrame("Show Health", 120, showHealth, function(value)
+    showHealth = value
+    updateESP()
+end)
+
+createToggleFrame("Show Boxes", 150, showBoxes, function(value)
+    showBoxes = value
+    updateESP()
+end)
+
+createToggleFrame("Show Tracers", 180, showTracers, function(value)
+    showTracers = value
+    updateESP()
+end)
+
+-- Color Selection
+local colorLabel = Instance.new("TextLabel")
+colorLabel.Size = UDim2.new(1, 0, 0, 20)
+colorLabel.Position = UDim2.new(0, 0, 0, 210)
+colorLabel.BackgroundTransparency = 1
+colorLabel.Text = "Glow Color:"
+colorLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+colorLabel.TextSize = 12
+colorLabel.Font = Enum.Font.Code
+colorLabel.TextXAlignment = Enum.TextXAlignment.Left
+colorLabel.Parent = contentFrame
+
+local colorButtonsFrame = Instance.new("Frame")
+colorButtonsFrame.Size = UDim2.new(1, 0, 0, 25)
+colorButtonsFrame.Position = UDim2.new(0, 0, 0, 230)
+colorButtonsFrame.BackgroundTransparency = 1
+colorButtonsFrame.Parent = contentFrame
+
+-- Color Buttons
+local colors = {
+    {name = "Red", color = Color3.fromRGB(255, 50, 50)},
+    {name = "Green", color = Color3.fromRGB(50, 255, 50)},
+    {name = "Blue", color = Color3.fromRGB(50, 100, 255)},
+    {name = "Yellow", color = Color3.fromRGB(255, 255, 50)},
+    {name = "Purple", color = Color3.fromRGB(200, 50, 255)},
+    {name = "White", color = Color3.fromRGB(255, 255, 255)}
+}
+
+local colorButtons = {}
+for i, colorData in ipairs(colors) do
+    local colorButton = Instance.new("TextButton")
+    colorButton.Size = UDim2.new(0, 35, 0, 20)
+    colorButton.Position = UDim2.new(0, (i-1) * 40, 0, 0)
+    colorButton.BackgroundColor3 = colorData.color
+    colorButton.BorderSizePixel = 1
+    colorButton.BorderColor3 = i == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+    colorButton.Text = ""
+    colorButton.Parent = colorButtonsFrame
+    
+    colorButton.MouseButton1Click:Connect(function()
+        glowColor = colorData.color
+        for j, otherColorData in ipairs(colors) do
+            colorButtons[j].BorderColor3 = j == i and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+        end
+        updateHighlightColors()
+    end)
+    
+    colorButtons[i] = colorButton
+end
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 1, -25)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "ESP: Disabled | AimBot: Disabled"
+statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Code
+statusLabel.Parent = contentFrame
+
+-- Toggle Button (always visible)
+local mainToggleButton = Instance.new("TextButton")
+mainToggleButton.Size = UDim2.new(0, 80, 0, 30)
+mainToggleButton.Position = UDim2.new(0, 20, 0, 20)
+mainToggleButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainToggleButton.BorderSizePixel = 1
+mainToggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+mainToggleButton.Text = "ESP+AimBot"
+mainToggleButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+mainToggleButton.TextSize = 14
+mainToggleButton.Font = Enum.Font.Code
+mainToggleButton.Parent = screenGui
+
+-- FOV Circle (Visualisation du champ de vision)
+local fovCircle = Instance.new("Frame")
+fovCircle.Size = UDim2.new(0, aimBotFOV * 2, 0, aimBotFOV * 2)
+fovCircle.Position = UDim2.new(0.5, -aimBotFOV, 0.5, -aimBotFOV)
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.BackgroundTransparency = 0.9
+fovCircle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+fovCircle.BorderSizePixel = 1
+fovCircle.BorderColor3 = Color3.fromRGB(100, 100, 100)
+fovCircle.Visible = false
+fovCircle.Parent = screenGui
+
+-- Fonctions
+local function isEnemy(targetPlayer)
+    if targetPlayer == player then
+        return false
+    end
+    
+    -- Si pas de teams, tout le monde est ennemi
+    if not targetPlayer.Team or not player.Team then
+        return true
+    end
+    
+    -- Teams différentes = ennemi
+    return targetPlayer.Team ~= player.Team
+end
+
+local function getClosestPlayerToCursor()
+    local closestPlayer = nil
+    local closestDistance = aimBotFOV
+    local mousePos = UserInputService:GetMouseLocation()
+    
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if isEnemy(targetPlayer) and targetPlayer.Character and targetPlayer.Character:FindFirstChild(aimBotPart) then
+            local targetPos, onScreen = camera:WorldToViewportPoint(targetPlayer.Character[aimBotPart].Position)
+            
+            if onScreen then
+                local distance = (Vector2.new(mousePos.X, mousePos.Y) - Vector2.new(targetPos.X, targetPos.Y)
+                local magnitude = distance.Magnitude
+                
+                if magnitude < closestDistance then
+                    closestDistance = magnitude
+                    closestPlayer = targetPlayer
+                end
+            end
+        end
+    end
+    
+    return closestPlayer
+end
+
+local function aimAt(targetPart)
+    if not targetPart then return end
+    
+    local camera = Workspace.CurrentCamera
+    local camCF = camera.CFrame
+    local targetPos = targetPart.Position
+    
+    -- Calcul de la nouvelle direction
+    local newLookVector = (targetPos - camCF.Position).Unit
+    local smoothFactor = 1 - aimBotSmoothness
+    
+    -- Interpolation pour un mouvement fluide
+    local currentLookVector = camCF.LookVector
+    local smoothedLookVector = currentLookVector:Lerp(newLookVector, smoothFactor)
+    
+    -- Application de la nouvelle rotation
+    camera.CFrame = CFrame.new(camCF.Position, camCF.Position + smoothedLookVector)
+end
+
+local function createHighlight(targetPlayer)
+    if not targetPlayer.Character then
+        return
+    end
+    
+    -- Supprimer le highlight existant
+    if highlights[targetPlayer.Name] then
+        highlights[targetPlayer.Name]:Destroy()
+        highlights[targetPlayer.Name] = nil
+    end
+    
+    -- Créer un nouveau highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "EnemyESP"
+    highlight.Adornee = targetPlayer.Character
+    highlight.FillColor = glowColor
+    highlight.FillTransparency = glowTransparency
+    highlight.OutlineColor = glowColor
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = targetPlayer.Character
+    
+    highlights[targetPlayer.Name] = highlight
+    
+    -- Créer le label d'info
+    if infoLabels[targetPlayer.Name] then
+        infoLabels[targetPlayer.Name]:Destroy()
+    end
+    infoLabels[targetPlayer.Name] = createInfoLabel(targetPlayer)
+    
+    -- Créer la box ESP si activé
+    if showBoxes and not boxes[targetPlayer.Name] then
+        boxes[targetPlayer.Name] = createBoxESP(targetPlayer.Character)
+    end
+    
+    -- Créer le tracer si activé
+    if showTracers and not tracers[targetPlayer.Name] then
+        tracers[targetPlayer.Name] = createTracer(targetPlayer.Character)
+    end
+end
+
+local function createInfoLabel(targetPlayer)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Adornee = targetPlayer.Character:WaitForChild("Head")
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = targetPlayer.Character.Head
+    
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(1, 0, 1, 0)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = ""
+    infoLabel.TextColor3 = glowColor
+    infoLabel.TextSize = 14
+    infoLabel.Font = Enum.Font.Code
+    infoLabel.Parent = billboard
+    
+    return billboard
+end
+
+local function createBoxESP(character)
+    local box = Instance.new("BoxHandleAdornment")
+    box.Adornee = character
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Size = character:GetExtentsSize()
+    box.Color3 = glowColor
+    box.Transparency = 0.7
+    box.Parent = character
+    return box
+end
+
+local function createTracer(character)
+    local tracer = Instance.new("Frame")
+    tracer.Size = UDim2.new(0, 2, 0, 200)
+    tracer.BackgroundColor3 = glowColor
+    tracer.BorderSizePixel = 0
+    tracer.AnchorPoint = Vector2.new(0.5, 1)
+    tracer.Position = UDim2.new(0.5, 0, 1, 0)
+    tracer.Visible = false
+    tracer.Parent = screenGui
+    return tracer
+end
+
+local function removeHighlight(targetPlayer)
+    if highlights[targetPlayer.Name] then
+        highlights[targetPlayer.Name]:Destroy()
+        highlights[targetPlayer.Name] = nil
+    end
+    if infoLabels[targetPlayer.Name] then
+        infoLabels[targetPlayer.Name]:Destroy()
+        infoLabels[targetPlayer.Name] = nil
+    end
+    if boxes[targetPlayer.Name] then
+        boxes[targetPlayer.Name]:Destroy()
+        boxes[targetPlayer.Name] = nil
+    end
+    if tracers[targetPlayer.Name] then
+        tracers[targetPlayer.Name]:Destroy()
+        tracers[targetPlayer.Name] = nil
+    end
+end
+
+local function updatePlayerInfo(targetPlayer)
+    if not infoLabels[targetPlayer.Name] or not targetPlayer.Character then return end
+    
+    local head = targetPlayer.Character:FindFirstChild("Head")
+    local humanoid = targetPlayer.Character:FindFirstChild("Humanoid")
+    if not head then return end
+    
+    local distance = (head.Position - player.Character.Head.Position).Magnitude
+    if distance > maxDistance then return end
+    
+    local text = ""
+    if showNames then text = targetPlayer.Name end
+    
+    if showDistance then
+        text = text .. string.format("\n%.1f studs", distance)
+    end
+    
+    if showHealth and humanoid then
+        text = text .. string.format("\n%d/%d HP", humanoid.Health, humanoid.MaxHealth)
+    end
+    
+    infoLabels[targetPlayer.Name].TextLabel.Text = text
+end
+
+local function updateTracer(targetPlayer)
+    if not tracers[targetPlayer.Name] or not targetPlayer.Character then return end
+    
+    local rootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local screenPos, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+    
+    if not onScreen then
+        tracers[targetPlayer.Name].Visible = true
+        
+        local guiPos = Vector2.new(screenPos.X, screenPos.Y)
+        local center = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y/2)
+        local direction = (guiPos - center).Unit
+        
+        local length = math.min(center.Y, center.X) * 0.9
+        local endPoint = center + (direction * length)
+        
+        local angle = math.atan2(direction.Y, direction.X)
+        local rotation = UDim.new(0, math.deg(angle) + 90)
+        
+        tracers[targetPlayer.Name].Position = UDim2.new(0, endPoint.X, 0, endPoint.Y)
+        tracers[targetPlayer.Name].Rotation = rotation
+    else
+        tracers[targetPlayer.Name].Visible = false
+    end
+end
+
+local function updateHighlightColors()
+    for playerName, highlight in pairs(highlights) do
+        if highlight and highlight.Parent then
+            highlight.FillColor = glowColor
+            highlight.OutlineColor = glowColor
+            highlight.FillTransparency = glowTransparency
+        end
+    end
+    
+    for playerName, box in pairs(boxes) do
+        if box and box.Parent then
+            box.Color3 = glowColor
+        end
+    end
+    
+    for playerName, tracer in pairs(tracers) do
+        if tracer and tracer.Parent then
+            tracer.BackgroundColor3 = glowColor
+        end
+    end
+    
+    for playerName, infoLabel in pairs(infoLabels) do
+        if infoLabel and infoLabel.Parent then
+            infoLabel.TextLabel.TextColor3 = glowColor
+        end
+    end
+end
+
+local function updateESP()
+    -- Nettoyer les anciens highlights
+    for playerName, highlight in pairs(highlights) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    highlights = {}
+    
+    for playerName, infoLabel in pairs(infoLabels) do
+        if infoLabel and infoLabel.Parent then
+            infoLabel:Destroy()
+        end
+    end
+    infoLabels = {}
+    
+    for playerName, box in pairs(boxes) do
+        if box and box.Parent then
+            box:Destroy()
+        end
+    end
+    boxes = {}
+    
+    for playerName, tracer in pairs(tracers) do
+        if tracer and tracer.Parent then
+            tracer:Destroy()
+        end
+    end
+    tracers = {}
+    
+    if not isESPEnabled then
+        return
+    end
+    
+    -- Créer les highlights pour tous les ennemis
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if isEnemy(targetPlayer) and targetPlayer.Character then
+            createHighlight(targetPlayer)
+        end
+    end
+end
+
+-- Button events
+mainToggleButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+    fovCircle.Visible = isAimBotEnabled and mainFrame.Visible
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    fovCircle.Visible = false
+end)
+
+-- Player events
+local function onPlayerAdded(newPlayer)
+    -- Attendre le character
+    local function onCharacterAdded(character)
+        wait(0.5) -- Petit délai pour s'assurer que le character est chargé
+        if isESPEnabled and isEnemy(newPlayer) then
+            createHighlight(newPlayer)
+        end
+    end
+    
+    if newPlayer.Character then
+        onCharacterAdded(newPlayer.Character)
+    end
+    
+    newPlayer.CharacterAdded:Connect(onCharacterAdded)
+end
+
+local function onPlayerRemoving(leftPlayer)
+    removeHighlight(leftPlayer)
+end
+
+-- Connecter les events pour tous les joueurs
+for _, existingPlayer in pairs(Players:GetPlayers()) do
+    if existingPlayer ~= player then
+        onPlayerAdded(existingPlayer)
+    end
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+-- Gérer les changements de team
+player:GetPropertyChangedSignal("Team"):Connect(function()
+    wait(0.1)
+    updateESP()
+end)
+
+-- Surveiller les changements de team des autres joueurs
+local function monitorPlayerTeam(targetPlayer)
+    if targetPlayer ~= player then
+        targetPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+            wait(0.1)
+            if isESPEnabled then
+                if isEnemy(targetPlayer) and targetPlayer.Character then
+                    createHighlight(targetPlayer)
+                else
+                    removeHighlight(targetPlayer)
+                end
+            end
+        end)
+    end
+end
+
+for _, existingPlayer in pairs(Players:GetPlayers()) do
+    monitorPlayerTeam(existingPlayer)
+end
+
+Players.PlayerAdded:Connect(function(newPlayer)
+    monitorPlayerTeam(newPlayer)
+end)
+
+-- Mise à jour en continu des infos
+RunService.Heartbeat:Connect(function()
+    if not isESPEnabled then return end
+    
+    for playerName, highlight in pairs(highlights) do
+        local targetPlayer = Players:FindFirstChild(playerName)
+        if targetPlayer and targetPlayer.Character then
+            -- Mettre à jour les infos
+            updatePlayerInfo(targetPlayer)
+            
+            -- Mettre à jour les tracers
+            if showTracers then
+                updateTracer(targetPlayer)
+            end
+            
+            -- Désactiver si trop loin
+            local distance = (targetPlayer.Character:GetPivot().Position - player.Character:GetPivot().Position).Magnitude
+            if distance > maxDistance then
+                highlight.Enabled = false
+                if infoLabels[playerName] then infoLabels[playerName].Enabled = false end
+                if boxes[playerName] then boxes[playerName].Visible = false end
+                if tracers[playerName] then tracers[playerName].Visible = false end
+            else
+                highlight.Enabled = true
+                if infoLabels[playerName] then infoLabels[playerName].Enabled = true end
+                if boxes[playerName] then boxes[playerName].Visible = true end
+            end
+        end
+    end
+end)
+
+-- AimBot functionality
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    -- Activation du AimBot
+    if input.KeyCode == aimBotKey and isAimBotEnabled then
+        target = getClosestPlayerToCursor()
+        if target and target.Character and target.Character:FindFirstChild(aimBotPart) then
+            local targetPart = target.Character[aimBotPart]
+            while UserInputService:IsKeyDown(aimBotKey) and target and target.Character and target.Character:FindFirstChild(aimBotPart) do
+                aimAt(targetPart)
+                RunService.RenderStepped:Wait()
+            end
+        end
+    end
+    
+    -- Raccourci clavier pour ouvrir/fermer le menu
+    if input.KeyCode == Enum.KeyCode.E and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        mainToggleButton.MouseButton1Click:Fire()
+    end
+end)
+
+print("Enemy ESP + AimBot loaded! Press Ctrl+E or click ESP+AimBot to open.")
