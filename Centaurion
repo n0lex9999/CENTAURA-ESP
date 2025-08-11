@@ -1,28 +1,29 @@
--- Place as a LocalScript in StarterPlayerScripts
+-- Place this as a LocalScript in StarterPlayerScripts
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
+local WS = game:GetService("Workspace")
 local GuiService = game:GetService("GuiService")
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui")
-local camera = Workspace.CurrentCamera
+local camera = WS.CurrentCamera
 
 -- =========================
--- Config (defaults)
+-- Config (tweak in UI below)
 -- =========================
 local isESPEnabled = true
-local isAimAssistEnabled = true
-local isSilentAimEnabled = true
-local allowWallbang = true
+local isAimAssistEnabled = true         -- hold aimKey
+local isSilentAimEnabled = true         -- brief camera nudge on Tool.Activated
+local isTriggerBotEnabled = true
+local allowWallbang = true              -- target selection can ignore LOS via limited penetrations
 
 local aimKey = Enum.KeyCode.Q
 local aimPartName = "Head"
-local aimSmoothness = 0.15
-
-local fovHalfSize = 120 -- square FOV half-size in pixels
+local aimSmoothness = 0.15              -- 0=instant, 1=very slow
+local bulletSpeed = 600                 -- studs/sec for prediction (set to your weapon)
+local fovHalfSize = 120                 -- square FOV half-size in pixels
 local fovVisible = true
 
 local showNames = true
@@ -30,7 +31,7 @@ local showDistance = true
 local showHealth = true
 local showCornerBoxes = true
 local showTracers = true
-local tracerOriginMode = "Bottom" -- "Bottom" | "Center" | "Mouse"
+local tracerOriginMode = "Bottom"       -- "Bottom" | "Center" | "Mouse"
 local tracerThickness = 2
 local maxDistance = 1000
 
@@ -40,10 +41,12 @@ local colorVisible = Color3.fromRGB(50, 255, 50)
 local colorPeek = Color3.fromRGB(255, 200, 0)
 local colorOccluded = Color3.fromRGB(255, 80, 80)
 
--- Visibility smoothing (ms)
-local visibilityHoldMs = 160
+local visibilityHoldMs = 160            -- smoothing to stop flicker
+local triggerRadiusPx = 10              -- pixel radius around mouse for trigger bot
+local triggerCooldownSec = 0.12         -- min time between activations
+local maxPenetrations = 2               -- how many surfaces we allow as "wallbang" during selection
 
--- Spinbot + Speed
+-- Spin + speed (optional)
 local spinEnabled = false
 local spinSpeedDegPerSec = 600
 local speedEnabled = false
@@ -56,9 +59,9 @@ local highlights = {}
 local infoLabels = {}
 local cornerBoxes = {}
 local tracers = {}
-local target = nil
-
 local visibilityState = {} -- [playerName] = {class=string, lastChangeTime=ms}
+local lastTriggerFireAt = 0
+local currentTool = nil
 
 -- =========================
 -- UI
@@ -70,8 +73,8 @@ screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 360, 0, 520)
-mainFrame.Position = UDim2.new(0.5, -180, 0.5, -260)
+mainFrame.Size = UDim2.new(0, 380, 0, 540)
+mainFrame.Position = UDim2.new(0.5, -190, 0.5, -270)
 mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 mainFrame.BorderSizePixel = 1
 mainFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
@@ -90,7 +93,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -30, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "ESP + Aim Assist + Silent + Wallbang + Spin/Speed"
+title.Text = "ESP + Aim (square FOV, prediction) + Silent + Trigger + Wallbang"
 title.TextColor3 = Color3.fromRGB(200, 200, 200)
 title.TextSize = 14
 title.Font = Enum.Font.Code
@@ -113,7 +116,7 @@ local contentFrame = Instance.new("ScrollingFrame")
 contentFrame.Size = UDim2.new(1, -20, 1, -40)
 contentFrame.Position = UDim2.new(0, 10, 0, 35)
 contentFrame.BackgroundTransparency = 1
-contentFrame.CanvasSize = UDim2.new(0, 0, 0, 1000)
+contentFrame.CanvasSize = UDim2.new(0, 0, 0, 1200)
 contentFrame.ScrollBarThickness = 4
 contentFrame.Parent = mainFrame
 
@@ -121,21 +124,19 @@ local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, 0, 0, 20)
 statusLabel.Position = UDim2.new(0, 0, 1, -25)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "ESP: On | Aim: On | Silent: On | Wallbang: On"
+statusLabel.Text = ""
 statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
 statusLabel.TextSize = 12
 statusLabel.Font = Enum.Font.Code
 statusLabel.Parent = contentFrame
 
 local function setStatus()
-    statusLabel.Text =
-        string.format("ESP: %s | Aim: %s | Silent: %s | Wallbang: %s",
-            isESPEnabled and "On" or "Off",
-            isAimAssistEnabled and "On" or "Off",
-            isSilentAimEnabled and "On" or "Off",
-            allowWallbang and "On" or "Off"
-        )
-    statusLabel.TextColor3 = (isESPEnabled or isAimAssistEnabled) and Color3.fromRGB(100,255,100) or Color3.fromRGB(255,100,100)
+    statusLabel.Text = string.format("ESP:%s Aim:%s Silent:%s Trigger:%s Wallbang:%s",
+        isESPEnabled and "On" or "Off",
+        isAimAssistEnabled and "On" or "Off",
+        isSilentAimEnabled and "On" or "Off",
+        isTriggerBotEnabled and "On" or "Off",
+        allowWallbang and "On" or "Off")
 end
 
 local nextY = 0
@@ -254,15 +255,16 @@ local function createSlider(name, minVal, maxVal, defaultVal, formatFn, onChange
     bar.BorderColor3 = Color3.fromRGB(60, 60, 60)
     bar.Parent = container
 
+    local rel0 = (defaultVal - minVal) / (maxVal - minVal)
     local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
+    fill.Size = UDim2.new(rel0, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
     fill.BorderSizePixel = 0
     fill.Parent = bar
 
     local knob = Instance.new("Frame")
     knob.Size = UDim2.new(0, 12, 1.8, 0)
-    knob.Position = UDim2.new((defaultVal - minVal) / (maxVal - minVal), -6, 0.5, -4)
+    knob.Position = UDim2.new(rel0, -6, 0.5, -4)
     knob.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
     knob.BorderSizePixel = 1
     knob.BorderColor3 = Color3.fromRGB(60, 60, 60)
@@ -278,25 +280,16 @@ local function createSlider(name, minVal, maxVal, defaultVal, formatFn, onChange
         label.Text = name .. ": " .. formatFn(value)
     end
     knob.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
     end)
     knob.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
     bar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            setFromX(input.Position.X)
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; setFromX(input.Position.X) end
     end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            setFromX(input.Position.X)
-        end
+    UIS.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then setFromX(input.Position.X) end
     end)
 end
 
@@ -304,7 +297,8 @@ end
 createToggle("Enable ESP", isESPEnabled, function(v) isESPEnabled = v end)
 createToggle("Enable Aim Assist (hold Q)", isAimAssistEnabled, function(v) isAimAssistEnabled = v end)
 createToggle("Enable Silent Aim (on fire)", isSilentAimEnabled, function(v) isSilentAimEnabled = v end)
-createToggle("Allow Wallbang (ignore LOS for targeting)", allowWallbang, function(v) allowWallbang = v end)
+createToggle("Enable Trigger Bot", isTriggerBotEnabled, function(v) isTriggerBotEnabled = v end)
+createToggle("Allow Wallbang (selection)", allowWallbang, function(v) allowWallbang = v end)
 createToggle("Show Square FOV", fovVisible, function(v) fovVisible = v end)
 createToggle("Show Names", showNames, function(v) showNames = v end)
 createToggle("Show Distance", showDistance, function(v) showDistance = v end)
@@ -317,9 +311,13 @@ createDropdown("Tracer Origin", {"Bottom","Center","Mouse"}, 1, function(opt) tr
 -- Sliders
 createSlider("FOV Half Size", 40, 300, fovHalfSize, function(v) return string.format("%d px", math.floor(v)) end, function(v) fovHalfSize = math.floor(v) end)
 createSlider("Aim Smoothness", 0, 1, aimSmoothness, function(v) return string.format("%.2f", v) end, function(v) aimSmoothness = v end)
+createSlider("Bullet Speed (stud/s)", 0, 3000, bulletSpeed, function(v) return string.format("%d", math.floor(v)) end, function(v) bulletSpeed = math.floor(v) end)
 createSlider("Tracer Thickness", 1, 8, tracerThickness, function(v) return string.format("%d px", math.floor(v)) end, function(v) tracerThickness = math.floor(v) end)
 createSlider("Max ESP Distance", 100, 3000, maxDistance, function(v) return string.format("%d", math.floor(v)) end, function(v) maxDistance = math.floor(v) end)
 createSlider("Visibility Hold (ms)", 0, 400, visibilityHoldMs, function(v) return string.format("%d", math.floor(v)) end, function(v) visibilityHoldMs = math.floor(v) end)
+createSlider("Trigger Radius (px)", 2, 30, triggerRadiusPx, function(v) return string.format("%d", math.floor(v)) end, function(v) triggerRadiusPx = math.floor(v) end)
+createSlider("Trigger Cooldown (ms)", 20, 400, triggerCooldownSec*1000, function(v) return string.format("%d", math.floor(v)) end, function(v) triggerCooldownSec = math.floor(v)/1000 end)
+createSlider("Max Penetrations", 0, 4, maxPenetrations, function(v) return string.format("%d", math.floor(v)) end, function(v) maxPenetrations = math.floor(v) end)
 
 -- Spin + Speed
 createToggle("Spinbot Enabled", spinEnabled, function(v) spinEnabled = v end)
@@ -329,7 +327,7 @@ createSlider("WalkSpeed", 16, 100, customWalkSpeed, function(v) return string.fo
 
 setStatus()
 
--- Quick toggle button
+-- Toggle button
 local mainToggleButton = Instance.new("TextButton")
 mainToggleButton.Size = UDim2.new(0, 100, 0, 30)
 mainToggleButton.Position = UDim2.new(0, 20, 0, 20)
@@ -361,21 +359,42 @@ local function isEnemy(p)
 end
 
 local function isPointInFOVSquare(screenPoint2D)
-    local mousePos = UserInputService:GetMouseLocation()
+    local mousePos = UIS:GetMouseLocation()
     local dx = screenPoint2D.X - mousePos.X
     local dy = screenPoint2D.Y - mousePos.Y
     local adx, ady = math.abs(dx), math.abs(dy)
     return (adx <= fovHalfSize and ady <= fovHalfSize), math.max(adx, ady)
 end
 
-local function hasClearShotTo(worldPoint, targetCharacter)
+local function losOrPenetrate(origin, dest, targetCharacter)
+    -- Returns true if LOS is clear OR we can "penetrate" <= maxPenetrations surfaces
+    local direction = dest - origin
+    local dirUnit = direction.Magnitude > 0 and direction.Unit or Vector3.new()
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Blacklist
     params.FilterDescendantsInstances = { localPlayer.Character, targetCharacter }
     params.IgnoreWater = true
-    local origin = camera.CFrame.Position
-    local result = Workspace:Raycast(origin, worldPoint - origin, params)
-    return result == nil
+
+    local remaining = (dest - origin).Magnitude
+    local currentOrigin = origin
+    local penetrations = 0
+
+    while remaining > 0 do
+        local result = WS:Raycast(currentOrigin, dirUnit * remaining, params)
+        if not result then
+            return true
+        end
+        if result.Instance and result.Instance:IsDescendantOf(targetCharacter) then
+            return true
+        end
+        penetrations += 1
+        if penetrations > maxPenetrations then
+            return false
+        end
+        currentOrigin = result.Position + dirUnit * 0.2
+        remaining = (dest - currentOrigin).Magnitude
+    end
+    return false
 end
 
 local function classifyVisibilityStable(p)
@@ -385,64 +404,70 @@ local function classifyVisibilityStable(p)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not head then return "occluded" end
 
-    local headOnScreen = select(2, camera:WorldToViewportPoint(head.Position))
-    local headClear = hasClearShotTo(head.Position, char)
-    local torsoClear = hrp and hasClearShotTo(hrp.Position, char) or false
+    local onScreen = select(2, camera:WorldToViewportPoint(head.Position))
+    local origin = camera.CFrame.Position
+    local clear = losOrPenetrate(origin, head.Position, char)
+    if allowWallbang then clear = true end -- selection color stays stable even through walls if allowed
 
     local desired
-    if headOnScreen and headClear and torsoClear then
+    if onScreen and clear and hrp and losOrPenetrate(origin, hrp.Position, char) then
         desired = "visible"
-    elseif headOnScreen and headClear then
+    elseif onScreen and clear then
         desired = "peek"
     else
         desired = "occluded"
     end
 
-    local state = visibilityState[p.Name]
     local now = os.clock() * 1000
-    if not state then
+    local s = visibilityState[p.Name]
+    if not s then
         visibilityState[p.Name] = {class = desired, lastChangeTime = now}
         return desired
     end
-    if state.class ~= desired then
-        if now - state.lastChangeTime >= visibilityHoldMs then
-            state.class = desired
-            state.lastChangeTime = now
+    if s.class ~= desired then
+        if now - s.lastChangeTime >= visibilityHoldMs then
+            s.class = desired
+            s.lastChangeTime = now
         end
     else
-        state.lastChangeTime = now
+        s.lastChangeTime = now
     end
-    return visibilityState[p.Name].class
+    return s.class
 end
 
-local function getBestTarget(includesOccluded)
-    local closest, metricMin = nil, math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
-        if isEnemy(p) and p.Character and p.Character:FindFirstChild(aimPartName) then
-            local head = p.Character[aimPartName]
-            local v2, onScreen = camera:WorldToViewportPoint(head.Position)
-            if onScreen then
-                local inside, metric = isPointInFOVSquare(Vector2.new(v2.X, v2.Y))
-                if inside then
-                    if includesOccluded or hasClearShotTo(head.Position, p.Character) then
-                        if metric < metricMin then
-                            closest, metricMin = p, metric
-                        end
-                    end
-                end
-            end
-        end
+local function tracerOrigin()
+    local sz = camera.ViewportSize
+    local inset = GuiService:GetGuiInset()
+    if tracerOriginMode == "Bottom" then
+        return Vector2.new(sz.X/2, sz.Y - 4)
+    elseif tracerOriginMode == "Center" then
+        return Vector2.new(sz.X/2, sz.Y/2)
+    elseif tracerOriginMode == "Mouse" then
+        local m = UIS:GetMouseLocation()
+        return Vector2.new(m.X, m.Y - inset.Y)
     end
-    return closest
+    return Vector2.new(sz.X/2, sz.Y - 4)
 end
 
-local function aimAt(part)
-    if not part then return end
-    local camCF = camera.CFrame
-    local newDir = (part.Position - camCF.Position).Unit
-    local t = 1 - math.clamp(aimSmoothness, 0, 1)
-    local smoothed = camCF.LookVector:Lerp(newDir, t)
-    camera.CFrame = CFrame.new(camCF.Position, camCF.Position + smoothed)
+local function clampToViewport(pt)
+    local s = camera.ViewportSize
+    return Vector2.new(math.clamp(pt.X, 0, s.X), math.clamp(pt.Y, 0, s.Y))
+end
+
+local function drawLine(line, p0, p1, tint)
+    local dx = p1.X - p0.X
+    local dy = p1.Y - p0.Y
+    local len = math.sqrt(dx*dx + dy*dy)
+    if not (len == len) or len < 1 then
+        line.Visible = false
+        return
+    end
+    local angle = math.deg(math.atan2(dy, dx))
+    line.Visible = true
+    line.Size = UDim2.fromOffset(len, tracerThickness)
+    line.Position = UDim2.fromOffset((p0.X + p1.X)/2, (p0.Y + p1.Y)/2)
+    line.Rotation = angle
+    line.BackgroundColor3 = tint
 end
 
 -- =========================
@@ -484,14 +509,11 @@ local function makeCornerBox()
     local container = Instance.new("Frame")
     container.Name = "CornerBox"
     container.BackgroundTransparency = 1
-    container.Size = UDim2.new(0, 100, 0, 150)
     container.Visible = false
     container.Parent = screenGui
 
     local function cornerFolder(n)
-        local g = Instance.new("Folder")
-        g.Name = n
-        g.Parent = container
+        local g = Instance.new("Folder"); g.Name = n; g.Parent = container
         local function seg(id)
             local s = Instance.new("Frame")
             s.Name = id
@@ -508,15 +530,11 @@ local function makeCornerBox()
         end
         return {H = seg("H"), V = seg("V")}
     end
-    cornerFolder("TL")
-    cornerFolder("TR")
-    cornerFolder("BL")
-    cornerFolder("BR")
+    cornerFolder("TL"); cornerFolder("TR"); cornerFolder("BL"); cornerFolder("BR")
     return container
 end
 
 local function tintCornerBox(container, tint)
-    if not container then return end
     for _, folder in ipairs(container:GetChildren()) do
         if folder:IsA("Folder") then
             for _, seg in ipairs(folder:GetChildren()) do
@@ -530,9 +548,8 @@ local function tintCornerBox(container, tint)
     end
 end
 
-local function updateCornerBox(container, worldCF, worldSize)
-    if not container then return end
-    local half = worldSize / 2
+local function updateCornerBox(container, cf, sz)
+    local half = sz / 2
     local offsets = {
         Vector3.new(-half.X,  half.Y, -half.Z),
         Vector3.new( half.X,  half.Y, -half.Z),
@@ -547,14 +564,12 @@ local function updateCornerBox(container, worldCF, worldSize)
     local maxX, maxY = -math.huge, -math.huge
     local any = false
     for _, off in ipairs(offsets) do
-        local wp = worldCF:PointToWorldSpace(off)
+        local wp = cf:PointToWorldSpace(off)
         local v, onScreen = camera:WorldToViewportPoint(wp)
         if v.Z > 0 then
             any = any or onScreen
-            minX = math.min(minX, v.X)
-            minY = math.min(minY, v.Y)
-            maxX = math.max(maxX, v.X)
-            maxY = math.max(maxY, v.Y)
+            minX = math.min(minX, v.X); minY = math.min(minY, v.Y)
+            maxX = math.max(maxX, v.X); maxY = math.max(maxY, v.Y)
         end
     end
     if not any then container.Visible = false return end
@@ -569,37 +584,15 @@ local function updateCornerBox(container, worldCF, worldSize)
     local glowThick = 6
 
     local function place(name, hx, hy, vx, vy, ax, ay)
-        local folder = container:FindFirstChild(name)
-        if not folder then return end
-        local H = folder:FindFirstChild("H")
-        local V = folder:FindFirstChild("V")
-        if not (H and V) then return end
-
-        H.Size = UDim2.fromOffset(cl, thick)
-        H.Position = UDim2.fromScale(hx, hy)
-        H.AnchorPoint = Vector2.new(ax, ay)
-        local hg = H:FindFirstChild("Glow")
-        if hg then
-            hg.Size = UDim2.fromOffset(cl, glowThick)
-            hg.Position = UDim2.new(0, 0, 0.5, 0)
-            hg.AnchorPoint = Vector2.new(0, 0.5)
-        end
-
-        V.Size = UDim2.fromOffset(thick, cl)
-        V.Position = UDim2.fromScale(vx, vy)
-        V.AnchorPoint = Vector2.new(ax, ay)
-        local vg = V:FindFirstChild("Glow")
-        if vg then
-            vg.Size = UDim2.fromOffset(glowThick, cl)
-            vg.Position = UDim2.new(0.5, 0, 0, 0)
-            vg.AnchorPoint = Vector2.new(0.5, 0)
-        end
+        local folder = container:FindFirstChild(name); if not folder then return end
+        local H = folder:FindFirstChild("H"); local V = folder:FindFirstChild("V"); if not (H and V) then return end
+        H.Size = UDim2.fromOffset(cl, thick); H.Position = UDim2.fromScale(hx, hy); H.AnchorPoint = Vector2.new(ax, ay)
+        local hg = H:FindFirstChild("Glow"); if hg then hg.Size = UDim2.fromOffset(cl, glowThick); hg.Position = UDim2.new(0,0,0.5,0); hg.AnchorPoint = Vector2.new(0,0.5) end
+        V.Size = UDim2.fromOffset(thick, cl); V.Position = UDim2.fromScale(vx, vy); V.AnchorPoint = Vector2.new(ax, ay)
+        local vg = V:FindFirstChild("Glow"); if vg then vg.Size = UDim2.fromOffset(glowThick, cl); vg.Position = UDim2.new(0.5,0,0,0); vg.AnchorPoint = Vector2.new(0.5,0) end
     end
-
-    place("TL", 0, 0, 0, 0, 0, 0)
-    place("TR", 1, 0, 1, 0, 1, 0)
-    place("BL", 0, 1, 0, 1, 0, 1)
-    place("BR", 1, 1, 1, 1, 1, 1)
+    place("TL", 0, 0, 0, 0, 0, 0); place("TR", 1, 0, 1, 0, 1, 0)
+    place("BL", 0, 1, 0, 1, 0, 1); place("BR", 1, 1, 1, 1, 1, 1)
 end
 
 local function createTracer()
@@ -610,39 +603,9 @@ local function createTracer()
     line.BorderSizePixel = 0
     line.AnchorPoint = Vector2.new(0.5, 0.5)
     line.Visible = false
+    line.ZIndex = 50
     line.Parent = screenGui
     return line
-end
-
-local function tracerLineBetween(line, p0, p1, tint)
-    local dx = p1.X - p0.X
-    local dy = p1.Y - p0.Y
-    local len = math.max(1, math.sqrt(dx*dx + dy*dy))
-    local angle = math.deg(math.atan2(dy, dx))
-    line.Visible = true
-    line.Size = UDim2.fromOffset(len, tracerThickness)
-    line.Position = UDim2.fromOffset((p0.X + p1.X)/2, (p0.Y + p1.Y)/2)
-    line.Rotation = angle
-    line.BackgroundColor3 = tint
-end
-
-local function screenPointClampToViewport(pt)
-    local size = camera.ViewportSize
-    return Vector2.new(math.clamp(pt.X, 0, size.X), math.clamp(pt.Y, 0, size.Y))
-end
-
-local function tracerOrigin()
-    local sz = camera.ViewportSize
-    local inset = GuiService:GetGuiInset()
-    if tracerOriginMode == "Bottom" then
-        return Vector2.new(sz.X/2, sz.Y - 4)
-    elseif tracerOriginMode == "Center" then
-        return Vector2.new(sz.X/2, sz.Y/2)
-    elseif tracerOriginMode == "Mouse" then
-        local m = UserInputService:GetMouseLocation()
-        return Vector2.new(m.X, m.Y - inset.Y)
-    end
-    return Vector2.new(sz.X/2, sz.Y - 4)
 end
 
 local function createHighlightFor(p)
@@ -671,6 +634,54 @@ local function updateESPAll()
     for _, p in ipairs(Players:GetPlayers()) do
         if isEnemy(p) and p.Character then createHighlightFor(p) end
     end
+end
+
+-- =========================
+-- Targeting and aim
+-- =========================
+local function getBestTarget(includesOccluded)
+    local closest, metricMin = nil, math.huge
+    local origin = camera.CFrame.Position
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) and p.Character and p.Character:FindFirstChild(aimPartName) then
+            local head = p.Character[aimPartName]
+            local v2, onScreen = camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                local inside, metric = isPointInFOVSquare(Vector2.new(v2.X, v2.Y))
+                if inside then
+                    if includesOccluded or losOrPenetrate(origin, head.Position, p.Character) then
+                        if metric < metricMin then
+                            closest, metricMin = p, metric
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function predictedHeadPosition(p)
+    if not (p and p.Character) then return nil end
+    local head = p.Character:FindFirstChild(aimPartName)
+    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+    if not head then return nil end
+    if not hrp or bulletSpeed <= 0 then
+        return head.Position
+    end
+    local dist = (head.Position - camera.CFrame.Position).Magnitude
+    local t = dist / bulletSpeed
+    local vel = hrp.AssemblyLinearVelocity
+    return head.Position + vel * t
+end
+
+local function aimCameraAt(worldPoint)
+    if not worldPoint then return end
+    local camCF = camera.CFrame
+    local desired = (worldPoint - camCF.Position).Unit
+    local t = 1 - math.clamp(aimSmoothness, 0, 1)
+    local smoothed = camCF.LookVector:Lerp(desired, t)
+    camera.CFrame = CFrame.new(camCF.Position, camCF.Position + smoothed)
 end
 
 -- =========================
@@ -709,49 +720,53 @@ Players.PlayerAdded:Connect(function(p)
     end)
 end)
 
--- Tool hook for "silent aim" camera nudge
-local function hookTool(tool)
+-- Track current tool
+local function bindTool(tool)
     if not tool or not tool:IsA("Tool") then return end
-    if tool:FindFirstChild("Handle") == nil then
-        -- still try; many guns don't expose handle for client
-    end
+    currentTool = tool
+    tool.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            if currentTool == tool then currentTool = nil end
+        end
+    end)
     tool.Activated:Connect(function()
         if not isSilentAimEnabled then return end
         local includeOcc = allowWallbang
         local tgt = getBestTarget(includeOcc)
-        if tgt and tgt.Character and tgt.Character:FindFirstChild(aimPartName) then
-            local original = camera.CFrame
-            local head = tgt.Character[aimPartName]
-            camera.CFrame = CFrame.new(original.Position, head.Position)
-            RunService.RenderStepped:Wait()
-            camera.CFrame = original
+        if tgt then
+            local aimPos = predictedHeadPosition(tgt)
+            if aimPos then
+                local original = camera.CFrame
+                camera.CFrame = CFrame.new(original.Position, aimPos)
+                RS.RenderStepped:Wait()
+                camera.CFrame = original
+            end
         end
     end)
 end
 
-local function hookAllTools()
+local function bindAllTools()
     if localPlayer.Character then
         for _, t in ipairs(localPlayer.Character:GetChildren()) do
-            if t:IsA("Tool") then hookTool(t) end
+            if t:IsA("Tool") then bindTool(t) end
         end
     end
     for _, t in ipairs(localPlayer.Backpack:GetChildren()) do
-        if t:IsA("Tool") then hookTool(t) end
+        if t:IsA("Tool") then bindTool(t) end
     end
 end
-
 if localPlayer.Character then
     localPlayer.Character.DescendantAdded:Connect(function(d)
-        if d:IsA("Tool") then hookTool(d) end
+        if d:IsA("Tool") then bindTool(d) end
     end)
 end
 localPlayer.Backpack.ChildAdded:Connect(function(d)
-    if d:IsA("Tool") then hookTool(d) end
+    if d:IsA("Tool") then bindTool(d) end
 end)
-hookAllTools()
+bindAllTools()
 
--- Main ESP update
-RunService.Heartbeat:Connect(function(dt)
+-- Main loop
+RS.Heartbeat:Connect(function(dt)
     setStatus()
     fovSquare.Visible = fovVisible
 
@@ -764,8 +779,7 @@ RunService.Heartbeat:Connect(function(dt)
         hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinSpeedDegPerSec * dt), 0)
     end
 
-    if not isESPEnabled then return end
-    if not myChar then return end
+    if not isESPEnabled or not myChar then return end
 
     for name, h in pairs(highlights) do
         local p = Players:FindFirstChild(name)
@@ -773,6 +787,7 @@ RunService.Heartbeat:Connect(function(dt)
             local billboard = infoLabels[name]
             local head = p.Character:FindFirstChild("Head")
             local hum = p.Character:FindFirstChild("Humanoid")
+
             if billboard and head and myChar and myChar:FindFirstChild("Head") then
                 local dist = (head.Position - myChar.Head.Position).Magnitude
                 local label = billboard:FindFirstChild("Info")
@@ -814,20 +829,13 @@ RunService.Heartbeat:Connect(function(dt)
                     end
 
                     if showTracers then
-                        local line = tracers[name]
-                        if not line then
-                            line = createTracer()
-                            tracers[name] = line
-                        end
+                        local line = tracers[name]; if not line then line = createTracer(); tracers[name] = line end
                         local root = p.Character:FindFirstChild("HumanoidRootPart") or head
                         if root then
                             local sp, onScreen = camera:WorldToViewportPoint(root.Position)
                             local p1 = Vector2.new(sp.X, sp.Y)
-                            local p0 = tracerOrigin()
-                            if not onScreen then
-                                p1 = screenPointClampToViewport(p1)
-                            end
-                            tracerLineBetween(line, p0, p1, tint)
+                            if not onScreen then p1 = clampToViewport(p1) end
+                            drawLine(line, tracerOrigin(), p1, tint)
                         else
                             line.Visible = false
                         end
@@ -838,34 +846,57 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
--- FOV square follow mouse
-RunService.RenderStepped:Connect(function()
+-- FOV square under mouse
+RS.RenderStepped:Connect(function()
     if fovSquare.Visible then
         local inset = GuiService:GetGuiInset()
-        local m = UserInputService:GetMouseLocation()
+        local m = UIS:GetMouseLocation()
         fovSquare.Size = UDim2.fromOffset(fovHalfSize * 2, fovHalfSize * 2)
         fovSquare.Position = UDim2.fromOffset(m.X - fovHalfSize, m.Y - fovHalfSize - inset.Y)
     end
 end)
 
 -- Aim assist hold
-UserInputService.InputBegan:Connect(function(input, gp)
+UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == Enum.KeyCode.E and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+    if input.KeyCode == Enum.KeyCode.E and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
         mainFrame.Visible = not mainFrame.Visible
         return
     end
     if input.KeyCode == aimKey and isAimAssistEnabled then
-        while UserInputService:IsKeyDown(aimKey) do
-            local includeOcc = allowWallbang
-            target = getBestTarget(includeOcc)
-            if target and target.Character and target.Character:FindFirstChild(aimPartName) then
-                aimAt(target.Character[aimPartName])
+        while UIS:IsKeyDown(aimKey) do
+            local tgt = getBestTarget(allowWallbang)
+            if tgt then
+                local aimPos = predictedHeadPosition(tgt)
+                aimCameraAt(aimPos)
             end
-            RunService.RenderStepped:Wait()
+            RS.RenderStepped:Wait()
+        end
+    end
+end)
+
+-- Trigger bot (auto-activate current tool if target is inside small square around mouse)
+RS.RenderStepped:Connect(function()
+    if not isTriggerBotEnabled or not currentTool then return end
+    if os.clock() - lastTriggerFireAt < triggerCooldownSec then return end
+
+    local tgt = getBestTarget(true) -- allow selection inside FOV regardless of LOS here
+    if not tgt or not tgt.Character or not tgt.Character:FindFirstChild(aimPartName) then return end
+    local head = tgt.Character[aimPartName]
+    local v2, onScreen = camera:WorldToViewportPoint(head.Position)
+    if not onScreen then return end
+
+    local mousePos = UIS:GetMouseLocation()
+    local dx = math.abs(v2.X - mousePos.X)
+    local dy = math.abs(v2.Y - mousePos.Y)
+    if dx <= triggerRadiusPx and dy <= triggerRadiusPx then
+        -- optional: ensure LOS or penetration
+        if allowWallbang or losOrPenetrate(camera.CFrame.Position, head.Position, tgt.Character) then
+            currentTool:Activate()
+            lastTriggerFireAt = os.clock()
         end
     end
 end)
 
 updateESPAll()
-print("ESP + Aim + Silent + Wallbang + Spin/Speed loaded. Ctrl+E toggles menu.")
+print("ESP + Aim + Silent + Trigger + Wallbang loaded. Ctrl+E toggles menu.")
