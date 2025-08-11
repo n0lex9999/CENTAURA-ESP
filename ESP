@@ -1,0 +1,358 @@
+-- Enemy ESP LocalScript - Dark Simple GUI
+-- Place this as a LocalScript in StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Variables
+local isESPEnabled = false
+local glowColor = Color3.fromRGB(255, 0, 0)
+local glowTransparency = 0.2
+local highlights = {}
+
+-- Create ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "EnemyESP"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Main Frame - Dark and Simple
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 280, 0, 200)
+mainFrame.Position = UDim2.new(0.5, -140, 0.5, -100)
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+-- Title Bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.Position = UDim2.new(0, 0, 0, 0)
+titleBar.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 1, 0)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Enemy ESP"
+title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.TextSize = 16
+title.Font = Enum.Font.Code
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+-- Close Button
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 25, 0, 25)
+closeButton.Position = UDim2.new(1, -28, 0, 2.5)
+closeButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+closeButton.BorderSizePixel = 1
+closeButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeButton.TextSize = 14
+closeButton.Font = Enum.Font.Code
+closeButton.Parent = titleBar
+
+-- Content Frame
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -40)
+contentFrame.Position = UDim2.new(0, 10, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+-- ESP Toggle
+local espToggleFrame = Instance.new("Frame")
+espToggleFrame.Size = UDim2.new(1, 0, 0, 30)
+espToggleFrame.Position = UDim2.new(0, 0, 0, 0)
+espToggleFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+espToggleFrame.BorderSizePixel = 1
+espToggleFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+espToggleFrame.Parent = contentFrame
+
+local espLabel = Instance.new("TextLabel")
+espLabel.Size = UDim2.new(0.7, 0, 1, 0)
+espLabel.Position = UDim2.new(0, 5, 0, 0)
+espLabel.BackgroundTransparency = 1
+espLabel.Text = "Enable ESP"
+espLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+espLabel.TextSize = 14
+espLabel.Font = Enum.Font.Code
+espLabel.TextXAlignment = Enum.TextXAlignment.Left
+espLabel.Parent = espToggleFrame
+
+local espToggleButton = Instance.new("TextButton")
+espToggleButton.Size = UDim2.new(0, 50, 0, 20)
+espToggleButton.Position = UDim2.new(1, -55, 0.5, -10)
+espToggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+espToggleButton.BorderSizePixel = 1
+espToggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+espToggleButton.Text = "OFF"
+espToggleButton.TextColor3 = Color3.fromRGB(255, 100, 100)
+espToggleButton.TextSize = 12
+espToggleButton.Font = Enum.Font.Code
+espToggleButton.Parent = espToggleFrame
+
+-- Color Selection
+local colorLabel = Instance.new("TextLabel")
+colorLabel.Size = UDim2.new(1, 0, 0, 20)
+colorLabel.Position = UDim2.new(0, 0, 0, 40)
+colorLabel.BackgroundTransparency = 1
+colorLabel.Text = "Glow Color:"
+colorLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+colorLabel.TextSize = 12
+colorLabel.Font = Enum.Font.Code
+colorLabel.TextXAlignment = Enum.TextXAlignment.Left
+colorLabel.Parent = contentFrame
+
+local colorButtonsFrame = Instance.new("Frame")
+colorButtonsFrame.Size = UDim2.new(1, 0, 0, 25)
+colorButtonsFrame.Position = UDim2.new(0, 0, 0, 60)
+colorButtonsFrame.BackgroundTransparency = 1
+colorButtonsFrame.Parent = contentFrame
+
+-- Color Buttons
+local colors = {
+    {name = "Red", color = Color3.fromRGB(255, 50, 50)},
+    {name = "Green", color = Color3.fromRGB(50, 255, 50)},
+    {name = "Blue", color = Color3.fromRGB(50, 100, 255)},
+    {name = "Yellow", color = Color3.fromRGB(255, 255, 50)},
+    {name = "Purple", color = Color3.fromRGB(200, 50, 255)},
+    {name = "White", color = Color3.fromRGB(255, 255, 255)}
+}
+
+local colorButtons = {}
+for i, colorData in ipairs(colors) do
+    local colorButton = Instance.new("TextButton")
+    colorButton.Size = UDim2.new(0, 35, 0, 20)
+    colorButton.Position = UDim2.new(0, (i-1) * 40, 0, 0)
+    colorButton.BackgroundColor3 = colorData.color
+    colorButton.BorderSizePixel = 1
+    colorButton.BorderColor3 = i == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+    colorButton.Text = ""
+    colorButton.Parent = colorButtonsFrame
+    
+    colorButtons[i] = {button = colorButton, color = colorData.color}
+end
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 1, -25)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "ESP: Disabled"
+statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Code
+statusLabel.Parent = contentFrame
+
+-- Toggle Button (always visible)
+local mainToggleButton = Instance.new("TextButton")
+mainToggleButton.Size = UDim2.new(0, 80, 0, 30)
+mainToggleButton.Position = UDim2.new(0, 20, 0, 20)
+mainToggleButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainToggleButton.BorderSizePixel = 1
+mainToggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+mainToggleButton.Text = "ESP"
+mainToggleButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+mainToggleButton.TextSize = 14
+mainToggleButton.Font = Enum.Font.Code
+mainToggleButton.Parent = screenGui
+
+-- Functions
+local function isEnemy(targetPlayer)
+    if targetPlayer == player then
+        return false
+    end
+    
+    -- If no teams, consider everyone else as enemy
+    if not targetPlayer.Team or not player.Team then
+        return true
+    end
+    
+    -- Different teams = enemy
+    return targetPlayer.Team ~= player.Team
+end
+
+local function createHighlight(targetPlayer)
+    if not targetPlayer.Character then
+        return
+    end
+    
+    -- Remove existing highlight
+    if highlights[targetPlayer.Name] then
+        highlights[targetPlayer.Name]:Destroy()
+        highlights[targetPlayer.Name] = nil
+    end
+    
+    -- Create new highlight for entire character
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "EnemyESP"
+    highlight.Adornee = targetPlayer.Character
+    highlight.FillColor = glowColor
+    highlight.FillTransparency = glowTransparency
+    highlight.OutlineColor = glowColor
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = targetPlayer.Character
+    
+    highlights[targetPlayer.Name] = highlight
+end
+
+local function removeHighlight(targetPlayer)
+    if highlights[targetPlayer.Name] then
+        highlights[targetPlayer.Name]:Destroy()
+        highlights[targetPlayer.Name] = nil
+    end
+end
+
+local function updateESP()
+    -- Clear all existing highlights
+    for playerName, highlight in pairs(highlights) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    highlights = {}
+    
+    if not isESPEnabled then
+        return
+    end
+    
+    -- Create highlights for all enemies
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if isEnemy(targetPlayer) and targetPlayer.Character then
+            createHighlight(targetPlayer)
+        end
+    end
+end
+
+local function updateHighlightColors()
+    for _, highlight in pairs(highlights) do
+        if highlight and highlight.Parent then
+            highlight.FillColor = glowColor
+            highlight.OutlineColor = glowColor
+            highlight.FillTransparency = glowTransparency
+        end
+    end
+end
+
+local function toggleESP()
+    isESPEnabled = not isESPEnabled
+    
+    espToggleButton.Text = isESPEnabled and "ON" or "OFF"
+    espToggleButton.TextColor3 = isESPEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    espToggleButton.BackgroundColor3 = isESPEnabled and Color3.fromRGB(20, 40, 20) or Color3.fromRGB(30, 30, 30)
+    
+    statusLabel.Text = isESPEnabled and "ESP: Enabled" or "ESP: Disabled"
+    statusLabel.TextColor3 = isESPEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    
+    updateESP()
+end
+
+-- Color button functionality
+for i, colorData in ipairs(colorButtons) do
+    colorData.button.MouseButton1Click:Connect(function()
+        glowColor = colorData.color
+        
+        -- Update visual feedback
+        for j, otherColorData in ipairs(colorButtons) do
+            otherColorData.button.BorderColor3 = j == i and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+        end
+        
+        updateHighlightColors()
+    end)
+end
+
+-- Button events
+mainToggleButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+end)
+
+espToggleButton.MouseButton1Click:Connect(toggleESP)
+
+-- Player events
+local function onPlayerAdded(newPlayer)
+    -- Wait for character
+    local function onCharacterAdded(character)
+        wait(0.5) -- Small delay to ensure character is fully loaded
+        if isESPEnabled and isEnemy(newPlayer) then
+            createHighlight(newPlayer)
+        end
+    end
+    
+    if newPlayer.Character then
+        onCharacterAdded(newPlayer.Character)
+    end
+    
+    newPlayer.CharacterAdded:Connect(onCharacterAdded)
+end
+
+local function onPlayerRemoving(leftPlayer)
+    removeHighlight(leftPlayer)
+end
+
+-- Connect events for all players
+for _, existingPlayer in pairs(Players:GetPlayers()) do
+    if existingPlayer ~= player then
+        onPlayerAdded(existingPlayer)
+    end
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+-- Handle team changes
+player:GetPropertyChangedSignal("Team"):Connect(function()
+    wait(0.1)
+    updateESP()
+end)
+
+-- Monitor other players' team changes
+local function monitorPlayerTeam(targetPlayer)
+    if targetPlayer ~= player then
+        targetPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+            wait(0.1)
+            if isESPEnabled then
+                if isEnemy(targetPlayer) and targetPlayer.Character then
+                    createHighlight(targetPlayer)
+                else
+                    removeHighlight(targetPlayer)
+                end
+            end
+        end)
+    end
+end
+
+for _, existingPlayer in pairs(Players:GetPlayers()) do
+    monitorPlayerTeam(existingPlayer)
+end
+
+Players.PlayerAdded:Connect(function(newPlayer)
+    monitorPlayerTeam(newPlayer)
+end)
+
+-- Keyboard shortcut
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.E and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        mainToggleButton.MouseButton1Click:Fire()
+    end
+end)
+
+print("Enemy ESP loaded! Press Ctrl+E or click ESP to open.")
