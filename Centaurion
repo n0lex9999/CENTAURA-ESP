@@ -1,0 +1,735 @@
+-- Enemy ESP + Aim Assist LocalScript
+-- Place this as a LocalScript in StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = Workspace.CurrentCamera
+
+-- Configuration
+local isESPEnabled = false
+local isAimBotEnabled = false
+local aimBotKey = Enum.KeyCode.Q
+local aimBotPart = "Head" -- Can be "HumanoidRootPart" or other
+local aimBotSmoothness = 0.2 -- 0 = instant, 1 = very slow
+
+-- Square FOV configuration (in pixels)
+local fovHalfSize = 100 -- half side length in pixels (FOV square side = fovHalfSize*2)
+
+-- Base color (used for UI, boxes, tracers; highlight gets overridden by visibility colors)
+local glowColor = Color3.fromRGB(255, 0, 0)
+local glowTransparency = 0.2
+
+-- Advanced visibility colors
+local colorVisible = Color3.fromRGB(50, 255, 50)
+local colorPeek = Color3.fromRGB(255, 200, 0)
+local colorOccluded = Color3.fromRGB(255, 80, 80)
+
+-- Toggles
+local showNames = true
+local showDistance = true
+local showHealth = true
+local showBoxes = false
+local showTracers = false
+local maxDistance = 1000
+
+-- State
+local highlights: {[string]: Highlight} = {}
+local infoLabels: {[string]: BillboardGui} = {}
+local boxes: {[string]: Instance} = {}
+local tracers: {[string]: Frame} = {}
+local target: Player? = nil
+
+-- UI root
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "EnemyESP"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Main Frame - Dark and Simple
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 300, 0, 350)
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -175)
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+-- Title Bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.Position = UDim2.new(0, 0, 0, 0)
+titleBar.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 1, 0)
+title.Position = UDim2.new(0, 10, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Enemy ESP + Aim Assist"
+title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.TextSize = 16
+title.Font = Enum.Font.Code
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+-- Close Button
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 25, 0, 25)
+closeButton.Position = UDim2.new(1, -28, 0, 2.5)
+closeButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+closeButton.BorderSizePixel = 1
+closeButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeButton.TextSize = 14
+closeButton.Font = Enum.Font.Code
+closeButton.Parent = titleBar
+
+-- Content Frame
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, -20, 1, -40)
+contentFrame.Position = UDim2.new(0, 10, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+-- Status label (forward-declared for callbacks)
+local statusLabel: TextLabel
+
+-- UI helper
+local function createToggleFrame(name: string, yPosition: number, defaultValue: boolean, callback: (boolean) -> ())
+    local toggleFrame = Instance.new("Frame")
+    toggleFrame.Size = UDim2.new(1, 0, 0, 30)
+    toggleFrame.Position = UDim2.new(0, 0, 0, yPosition)
+    toggleFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    toggleFrame.BorderSizePixel = 1
+    toggleFrame.BorderColor3 = Color3.fromRGB(40, 40, 40)
+    toggleFrame.Parent = contentFrame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 1, 0)
+    label.Position = UDim2.new(0, 5, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(180, 180, 180)
+    label.TextSize = 14
+    label.Font = Enum.Font.Code
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = toggleFrame
+
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(0, 50, 0, 20)
+    toggleButton.Position = UDim2.new(1, -55, 0.5, -10)
+    toggleButton.BackgroundColor3 = defaultValue and Color3.fromRGB(20, 40, 20) or Color3.fromRGB(30, 30, 30)
+    toggleButton.BorderSizePixel = 1
+    toggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+    toggleButton.Text = defaultValue and "ON" or "OFF"
+    toggleButton.TextColor3 = defaultValue and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    toggleButton.TextSize = 12
+    toggleButton.Font = Enum.Font.Code
+    toggleButton.Parent = toggleFrame
+
+    toggleButton.MouseButton1Click:Connect(function()
+        local newValue = not defaultValue
+        defaultValue = newValue
+        toggleButton.Text = newValue and "ON" or "OFF"
+        toggleButton.TextColor3 = newValue and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+        toggleButton.BackgroundColor3 = newValue and Color3.fromRGB(20, 40, 20) or Color3.fromRGB(30, 30, 30)
+        callback(newValue)
+    end)
+
+    return toggleFrame
+end
+
+-- Forward declare helpers used in callbacks
+local function updateESP() end
+local function updateHighlightColors() end
+
+-- ESP Toggle
+createToggleFrame("Enable ESP", 0, isESPEnabled, function(value)
+    isESPEnabled = value
+    updateESP()
+    if statusLabel then
+        statusLabel.Text = (isESPEnabled and "ESP: Enabled" or "ESP: Disabled") .. " | " ..
+            (isAimBotEnabled and ("Aim: Enabled (Press " .. tostring(aimBotKey) .. ")") or "Aim: Disabled")
+        statusLabel.TextColor3 = isESPEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    end
+end)
+
+-- Aim Toggle
+createToggleFrame("Enable Aim Assist", 30, isAimBotEnabled, function(value)
+    isAimBotEnabled = value
+    if statusLabel then
+        statusLabel.Text = (isESPEnabled and "ESP: Enabled" or "ESP: Disabled") .. " | " ..
+            (isAimBotEnabled and ("Aim: Enabled (Press " .. tostring(aimBotKey) .. ")") or "Aim: Disabled")
+        statusLabel.TextColor3 = isAimBotEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+    end
+end)
+
+-- Display options
+createToggleFrame("Show Names", 60, showNames, function(value)
+    showNames = value
+    updateESP()
+end)
+
+createToggleFrame("Show Distance", 90, showDistance, function(value)
+    showDistance = value
+    updateESP()
+end)
+
+createToggleFrame("Show Health", 120, showHealth, function(value)
+    showHealth = value
+    updateESP()
+end)
+
+createToggleFrame("Show Boxes", 150, showBoxes, function(value)
+    showBoxes = value
+    updateESP()
+end)
+
+createToggleFrame("Show Tracers", 180, showTracers, function(value)
+    showTracers = value
+    updateESP()
+end)
+
+-- Color Selection
+local colorLabel = Instance.new("TextLabel")
+colorLabel.Size = UDim2.new(1, 0, 0, 20)
+colorLabel.Position = UDim2.new(0, 0, 0, 210)
+colorLabel.BackgroundTransparency = 1
+colorLabel.Text = "Base Glow Color:"
+colorLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+colorLabel.TextSize = 12
+colorLabel.Font = Enum.Font.Code
+colorLabel.TextXAlignment = Enum.TextXAlignment.Left
+colorLabel.Parent = contentFrame
+
+local colorButtonsFrame = Instance.new("Frame")
+colorButtonsFrame.Size = UDim2.new(1, 0, 0, 25)
+colorButtonsFrame.Position = UDim2.new(0, 0, 0, 230)
+colorButtonsFrame.BackgroundTransparency = 1
+colorButtonsFrame.Parent = contentFrame
+
+-- Color Buttons
+local colors = {
+    {name = "Red", color = Color3.fromRGB(255, 50, 50)},
+    {name = "Green", color = Color3.fromRGB(50, 255, 50)},
+    {name = "Blue", color = Color3.fromRGB(50, 100, 255)},
+    {name = "Yellow", color = Color3.fromRGB(255, 255, 50)},
+    {name = "Purple", color = Color3.fromRGB(200, 50, 255)},
+    {name = "White", color = Color3.fromRGB(255, 255, 255)}
+}
+local colorButtons: {TextButton} = {}
+for i, colorData in ipairs(colors) do
+    local colorButton = Instance.new("TextButton")
+    colorButton.Size = UDim2.new(0, 35, 0, 20)
+    colorButton.Position = UDim2.new(0, (i - 1) * 40, 0, 0)
+    colorButton.BackgroundColor3 = colorData.color
+    colorButton.BorderSizePixel = 1
+    colorButton.BorderColor3 = i == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+    colorButton.Text = ""
+    colorButton.Parent = colorButtonsFrame
+
+    colorButton.MouseButton1Click:Connect(function()
+        glowColor = colorData.color
+        for j = 1, #colors do
+            colorButtons[j].BorderColor3 = j == i and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 60)
+        end
+        updateHighlightColors()
+    end)
+
+    colorButtons[i] = colorButton
+end
+
+-- Status Label
+statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 1, -25)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "ESP: Disabled | Aim: Disabled"
+statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Code
+statusLabel.Parent = contentFrame
+
+-- Toggle Button (always visible)
+local mainToggleButton = Instance.new("TextButton")
+mainToggleButton.Size = UDim2.new(0, 100, 0, 30)
+mainToggleButton.Position = UDim2.new(0, 20, 0, 20)
+mainToggleButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainToggleButton.BorderSizePixel = 1
+mainToggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
+mainToggleButton.Text = "ESP+Aim"
+mainToggleButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+mainToggleButton.TextSize = 14
+mainToggleButton.Font = Enum.Font.Code
+mainToggleButton.Parent = screenGui
+
+-- Square FOV overlay
+local fovSquare = Instance.new("Frame")
+fovSquare.Size = UDim2.new(0, fovHalfSize * 2, 0, fovHalfSize * 2)
+fovSquare.BackgroundTransparency = 0.9
+fovSquare.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+fovSquare.BorderSizePixel = 1
+fovSquare.BorderColor3 = Color3.fromRGB(100, 100, 100)
+fovSquare.Visible = false
+fovSquare.Parent = screenGui
+
+-- Helpers
+local function isEnemy(targetPlayer: Player): boolean
+    if targetPlayer == player then
+        return false
+    end
+    if not targetPlayer.Team or not player.Team then
+        return true
+    end
+    return targetPlayer.Team ~= player.Team
+end
+
+local function isPointInFOVSquare(screenPoint2D: Vector2)
+    local mousePos = UserInputService:GetMouseLocation()
+    local dx = screenPoint2D.X - mousePos.X
+    local dy = screenPoint2D.Y - mousePos.Y
+    local adx, ady = math.abs(dx), math.abs(dy)
+    return (adx <= fovHalfSize and ady <= fovHalfSize), math.max(adx, ady)
+end
+
+local function getClosestPlayerToCursor()
+    local closestPlayer: Player? = nil
+    local closestMetric = math.huge
+
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if isEnemy(targetPlayer) and targetPlayer.Character and targetPlayer.Character:FindFirstChild(aimBotPart) then
+            local wp, onScreen = camera:WorldToViewportPoint(targetPlayer.Character[aimBotPart].Position)
+            if onScreen then
+                local inside, metric = isPointInFOVSquare(Vector2.new(wp.X, wp.Y))
+                if inside and metric < closestMetric then
+                    closestMetric = metric
+                    closestPlayer = targetPlayer
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+local function aimAt(targetPart: BasePart?)
+    if not targetPart then return end
+    local camCF = camera.CFrame
+    local targetPos = targetPart.Position
+    local newLookVector = (targetPos - camCF.Position).Unit
+    local smoothFactor = 1 - math.clamp(aimBotSmoothness, 0, 1)
+    local currentLookVector = camCF.LookVector
+    local smoothedLookVector = currentLookVector:Lerp(newLookVector, smoothFactor)
+    camera.CFrame = CFrame.new(camCF.Position, camCF.Position + smoothedLookVector)
+end
+
+local function rayHitsCharacter(targetCharacter: Instance, worldPoint: Vector3)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = { player.Character or nil }
+    params.IgnoreWater = true
+
+    local origin = camera.CFrame.Position
+    local direction = worldPoint - origin
+    local result = Workspace:Raycast(origin, direction, params)
+    return result and result.Instance and result.Instance:IsDescendantOf(targetCharacter)
+end
+
+local function classifyVisibility(targetPlayer: Player): "visible" | "peek" | "occluded"
+    local char = targetPlayer.Character
+    if not char then return "occluded" end
+    local head = char:FindFirstChild("Head")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not head then return "occluded" end
+
+    local headVisible = rayHitsCharacter(char, head.Position)
+    local torsoVisible = hrp and rayHitsCharacter(char, hrp.Position) or false
+
+    if headVisible and torsoVisible then
+        return "visible"
+    end
+
+    if headVisible and not torsoVisible then
+        local right = head.CFrame.RightVector
+        local up = head.CFrame.UpVector
+        local offsets = {
+            head.Position + right * 0.5,
+            head.Position - right * 0.5,
+            head.Position + up * 0.5,
+            head.Position - up * 0.5,
+        }
+        local hits = 0
+        for _, p in ipairs(offsets) do
+            if rayHitsCharacter(char, p) then
+                hits += 1
+            end
+        end
+        if hits >= 1 then
+            return "peek"
+        end
+    end
+
+    return headVisible and "peek" or "occluded"
+end
+
+local function createInfoLabel(targetPlayer: Player)
+    local head = targetPlayer.Character and targetPlayer.Character:FindFirstChild("Head")
+    if not head then return nil end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EnemyInfo"
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = head
+
+    local info = Instance.new("TextLabel")
+    info.Name = "Info"
+    info.Size = UDim2.new(1, 0, 1, 0)
+    info.BackgroundTransparency = 1
+    info.Text = ""
+    info.TextColor3 = glowColor
+    info.TextSize = 14
+    info.Font = Enum.Font.Code
+    info.Parent = billboard
+
+    return billboard
+end
+
+local function createBoxESP(character: Model)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local box = Instance.new("BoxHandleAdornment")
+    box.Name = "BoxESP"
+    box.Adornee = hrp
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Size = character:GetExtentsSize()
+    box.Color3 = glowColor
+    box.Transparency = 0.7
+    box.Parent = hrp
+    return box
+end
+
+local function createTracer()
+    local tracer = Instance.new("Frame")
+    tracer.Name = "Tracer"
+    tracer.Size = UDim2.new(0, 2, 0, 200)
+    tracer.BackgroundColor3 = glowColor
+    tracer.BorderSizePixel = 0
+    tracer.AnchorPoint = Vector2.new(0.5, 1)
+    tracer.Position = UDim2.new(0.5, 0, 1, 0)
+    tracer.Visible = false
+    tracer.Parent = screenGui
+    return tracer
+end
+
+local function removeHighlight(targetPlayer: Player)
+    if highlights[targetPlayer.Name] then
+        highlights[targetPlayer.Name]:Destroy()
+        highlights[targetPlayer.Name] = nil
+    end
+    if infoLabels[targetPlayer.Name] then
+        infoLabels[targetPlayer.Name]:Destroy()
+        infoLabels[targetPlayer.Name] = nil
+    end
+    if boxes[targetPlayer.Name] then
+        boxes[targetPlayer.Name]:Destroy()
+        boxes[targetPlayer.Name] = nil
+    end
+    if tracers[targetPlayer.Name] then
+        tracers[targetPlayer.Name]:Destroy()
+        tracers[targetPlayer.Name] = nil
+    end
+end
+
+local function updatePlayerInfo(targetPlayer: Player)
+    local billboard = infoLabels[targetPlayer.Name]
+    if not billboard or not targetPlayer.Character then return end
+    local head = targetPlayer.Character:FindFirstChild("Head")
+    local humanoid = targetPlayer.Character:FindFirstChild("Humanoid")
+    if not head then return end
+
+    local myChar = player.Character
+    if not myChar or not myChar:FindFirstChild("Head") then return end
+
+    local distance = (head.Position - myChar.Head.Position).Magnitude
+    if distance > maxDistance then return end
+
+    local text = ""
+    if showNames then text = targetPlayer.Name end
+    if showDistance then
+        text = (#text > 0 and (text .. "\n") or "") .. string.format("%.1f studs", distance)
+    end
+    if showHealth and humanoid then
+        text = (#text > 0 and (text .. "\n") or "") .. string.format("%d/%d HP", math.floor(humanoid.Health), math.floor(humanoid.MaxHealth))
+    end
+
+    local label = billboard:FindFirstChild("Info") :: TextLabel?
+    if label then
+        label.Text = text
+    end
+end
+
+local function updateTracer(targetPlayer: Player, tintColor: Color3)
+    local tracer = tracers[targetPlayer.Name]
+    if not tracer or not targetPlayer.Character then return end
+
+    local rootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+
+    local screenPos, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+    if not onScreen then
+        tracer.Visible = true
+        local guiPos = Vector2.new(screenPos.X, screenPos.Y)
+        local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+        local direction = guiPos - center
+        if direction.Magnitude < 1e-3 then
+            tracer.Visible = false
+            return
+        end
+        direction = direction.Unit
+        local length = math.min(center.Y, center.X) * 0.9
+        local endPoint = center + (direction * length)
+        local angle = math.atan2(direction.Y, direction.X)
+        tracer.Position = UDim2.new(0, endPoint.X, 0, endPoint.Y)
+        tracer.Rotation = math.deg(angle) + 90
+        tracer.BackgroundColor3 = tintColor
+    else
+        tracer.Visible = false
+    end
+end
+
+function updateHighlightColors()
+    for _, box in pairs(boxes) do
+        if box and box.Parent then
+            if box:IsA("BoxHandleAdornment") then
+                box.Color3 = glowColor
+            end
+        end
+    end
+    for _, tracer in pairs(tracers) do
+        if tracer and tracer.Parent then
+            tracer.BackgroundColor3 = glowColor
+        end
+    end
+    for _, billboard in pairs(infoLabels) do
+        if billboard and billboard.Parent then
+            local label = billboard:FindFirstChild("Info")
+            if label then
+                (label :: TextLabel).TextColor3 = glowColor
+            end
+        end
+    end
+    -- Note: Highlight color is dynamically tinted per-visibility in Heartbeat loop
+end
+
+local function createHighlight(targetPlayer: Player)
+    if not targetPlayer.Character then return end
+    removeHighlight(targetPlayer)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "EnemyESP"
+    highlight.Adornee = targetPlayer.Character
+    highlight.FillColor = glowColor
+    highlight.FillTransparency = glowTransparency
+    highlight.OutlineColor = glowColor
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = targetPlayer.Character
+    highlights[targetPlayer.Name] = highlight
+
+    infoLabels[targetPlayer.Name] = createInfoLabel(targetPlayer)
+
+    if showBoxes and not boxes[targetPlayer.Name] then
+        boxes[targetPlayer.Name] = createBoxESP(targetPlayer.Character)
+    end
+
+    if showTracers and not tracers[targetPlayer.Name] then
+        tracers[targetPlayer.Name] = createTracer()
+    end
+end
+
+function updateESP()
+    for _, inst in pairs(highlights) do if inst then inst:Destroy() end end
+    for _, inst in pairs(infoLabels) do if inst then inst:Destroy() end end
+    for _, inst in pairs(boxes) do if inst then inst:Destroy() end end
+    for _, inst in pairs(tracers) do if inst then inst:Destroy() end end
+    highlights, infoLabels, boxes, tracers = {}, {}, {}, {}
+
+    if not isESPEnabled then return end
+
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if isEnemy(targetPlayer) and targetPlayer.Character then
+            createHighlight(targetPlayer)
+        end
+    end
+end
+
+-- Button events
+mainToggleButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+    fovSquare.Visible = isAimBotEnabled and mainFrame.Visible
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    fovSquare.Visible = false
+end)
+
+-- Player events
+local function onPlayerAdded(newPlayer: Player)
+    local function onCharacterAdded(_character: Model)
+        task.wait(0.5)
+        if isESPEnabled and isEnemy(newPlayer) then
+            createHighlight(newPlayer)
+        end
+    end
+    if newPlayer.Character then
+        onCharacterAdded(newPlayer.Character)
+    end
+    newPlayer.CharacterAdded:Connect(onCharacterAdded)
+end
+
+local function onPlayerRemoving(leftPlayer: Player)
+    removeHighlight(leftPlayer)
+end
+
+for _, existingPlayer in ipairs(Players:GetPlayers()) do
+    if existingPlayer ~= player then
+        onPlayerAdded(existingPlayer)
+    end
+end
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+-- Team changes
+player:GetPropertyChangedSignal("Team"):Connect(function()
+    task.wait(0.1)
+    updateESP()
+end)
+
+local function monitorPlayerTeam(targetPlayer: Player)
+    if targetPlayer ~= player then
+        targetPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+            task.wait(0.1)
+            if isESPEnabled then
+                if isEnemy(targetPlayer) and targetPlayer.Character then
+                    createHighlight(targetPlayer)
+                else
+                    removeHighlight(targetPlayer)
+                end
+            end
+        end)
+    end
+end
+for _, existingPlayer in ipairs(Players:GetPlayers()) do
+    monitorPlayerTeam(existingPlayer)
+end
+Players.PlayerAdded:Connect(function(newPlayer)
+    monitorPlayerTeam(newPlayer)
+end)
+
+-- Continuous updates
+RunService.Heartbeat:Connect(function()
+    if not isESPEnabled then return end
+    local myChar = player.Character
+    if not myChar then return end
+
+    for playerName, highlight in pairs(highlights) do
+        local targetPlayer = Players:FindFirstChild(playerName) :: Player?
+        if targetPlayer and targetPlayer.Character then
+            updatePlayerInfo(targetPlayer)
+
+            -- Distance gate and visibility tint
+            local ok1, myPos = pcall(function() return myChar:GetPivot().Position end)
+            local ok2, tgtPos = pcall(function() return targetPlayer.Character:GetPivot().Position end)
+            if ok1 and ok2 then
+                local distance = (tgtPos - myPos).Magnitude
+                if distance > maxDistance then
+                    highlight.Enabled = false
+                    if infoLabels[playerName] then infoLabels[playerName].Enabled = false end
+                    if boxes[playerName] then (boxes[playerName] :: any).Visible = false end
+                    if tracers[playerName] then tracers[playerName].Visible = false end
+                else
+                    highlight.Enabled = true
+                    if infoLabels[playerName] then infoLabels[playerName].Enabled = true end
+                    if boxes[playerName] then (boxes[playerName] :: any).Visible = true end
+
+                    -- Advanced visibility colors
+                    local cls = classifyVisibility(targetPlayer)
+                    local tint = cls == "visible" and colorVisible or (cls == "peek" and colorPeek or colorOccluded)
+                    highlight.FillColor = tint
+                    highlight.OutlineColor = tint
+
+                    -- Tint label/tracer to match
+                    local labelGui = infoLabels[playerName]
+                    if labelGui then
+                        local lbl = labelGui:FindFirstChild("Info")
+                        if lbl then
+                            (lbl :: TextLabel).TextColor3 = tint
+                        end
+                    end
+                    if showTracers then
+                        updateTracer(targetPlayer, tint)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Keep FOV square under mouse when visible
+RunService.RenderStepped:Connect(function()
+    if fovSquare.Visible then
+        local inset = GuiService:GetGuiInset()
+        local mousePos = UserInputService:GetMouseLocation()
+        fovSquare.Position = UDim2.fromOffset(mousePos.X - fovHalfSize, mousePos.Y - fovHalfSize - inset.Y)
+    end
+end)
+
+-- Aim Assist (hold key to aim towards closest enemy head inside square FOV)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+
+    -- Toggle menu: Ctrl+E
+    if input.KeyCode == Enum.KeyCode.E and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        mainFrame.Visible = not mainFrame.Visible
+        fovSquare.Visible = isAimBotEnabled and mainFrame.Visible
+        return
+    end
+
+    -- Aim hold
+    if input.KeyCode == aimBotKey and isAimBotEnabled then
+        target = getClosestPlayerToCursor()
+        if target and target.Character and target.Character:FindFirstChild(aimBotPart) then
+            local targetPartInstance = target.Character[aimBotPart] :: BasePart
+            while UserInputService:IsKeyDown(aimBotKey)
+                and target
+                and target.Character
+                and target.Character:FindFirstChild(aimBotPart) do
+                -- Ensure still inside FOV square
+                local wp, onScreen = camera:WorldToViewportPoint(targetPartInstance.Position)
+                if not onScreen then break end
+                local inside = select(1, isPointInFOVSquare(Vector2.new(wp.X, wp.Y)))
+                if not inside then break end
+                aimAt(targetPartInstance)
+                RunService.RenderStepped:Wait()
+            end
+        end
+    end
+end)
+
+print("Enemy ESP + Aim Assist loaded! Press Ctrl+E or click ESP+Aim to open.")
