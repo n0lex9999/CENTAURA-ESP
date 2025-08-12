@@ -19,7 +19,7 @@ local isSilentAimEnabled = true         -- brief camera nudge on Tool.Activated
 local isTriggerBotEnabled = true
 local allowWallbang = true              -- target selection can ignore LOS via limited penetrations
 
-local aimKey = Enum.KeyCode.Q
+local aimKey = Enum.KeyCode.MouseButton2
 local aimPartName = "Head"
 local aimSmoothness = 0.15              -- 0=instant, 1=very slow
 local bulletSpeed = 600                 -- studs/sec for prediction (set to your weapon)
@@ -42,8 +42,8 @@ local colorPeek = Color3.fromRGB(255, 200, 0)
 local colorOccluded = Color3.fromRGB(255, 80, 80)
 
 local visibilityHoldMs = 160            -- smoothing to stop flicker
-local triggerRadiusPx = 10              -- pixel radius around mouse for trigger bot
-local triggerCooldownSec = 0.12         -- min time between activations
+local triggerRadiusPx = 50              -- pixel radius around mouse for trigger bot
+local triggerCooldownSec = 0.1         -- min time between activations
 local maxPenetrations = 2               -- how many surfaces we allow as "wallbang" during selection
 
 -- Spin + speed (optional)
@@ -67,7 +67,7 @@ local currentTool = nil
 -- UI
 -- =========================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "EnemyESP"
+screenGui.Name = "ESP"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -334,7 +334,7 @@ mainToggleButton.Position = UDim2.new(0, 20, 0, 20)
 mainToggleButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 mainToggleButton.BorderSizePixel = 1
 mainToggleButton.BorderColor3 = Color3.fromRGB(60, 60, 60)
-mainToggleButton.Text = "ESP+Aim"
+mainToggleButton.Text = "CENTAURION"
 mainToggleButton.TextColor3 = Color3.fromRGB(200, 200, 200)
 mainToggleButton.TextSize = 14
 mainToggleButton.Font = Enum.Font.Code
