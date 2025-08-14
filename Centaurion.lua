@@ -19,7 +19,7 @@ local isSilentAimEnabled = true         -- brief camera nudge on Tool.Activated
 local isTriggerBotEnabled = true
 local allowWallbang = true              -- target selection can ignore LOS via limited penetrations
 
-local aimKey = Enum.KeyCode.MouseButton2
+local aimKey = Enum.UserInputType.MouseButton2
 local aimPartName = "Head"
 local aimSmoothness = 0.15              -- 0=instant, 1=very slow
 local bulletSpeed = 600                 -- studs/sec for prediction (set to your weapon)
