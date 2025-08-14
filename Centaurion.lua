@@ -19,7 +19,7 @@ local isSilentAimEnabled = true         -- brief camera nudge on Tool.Activated
 local isTriggerBotEnabled = true
 local allowWallbang = true              -- target selection can ignore LOS via limited penetrations
 
-local aimKey = Enum.KeyCode.Q
+local aimKey = Enum.KeyCode.MouseButton2
 local aimPartName = "Head"
 local aimSmoothness = 0.15              -- 0=instant, 1=very slow
 local bulletSpeed = 600                 -- studs/sec for prediction (set to your weapon)
@@ -295,7 +295,7 @@ end
 
 -- Toggles
 createToggle("Enable ESP", isESPEnabled, function(v) isESPEnabled = v end)
-createToggle("Enable Aim Assist (hold Q)", isAimAssistEnabled, function(v) isAimAssistEnabled = v end)
+createToggle("Enable Aim Assist (hold RMB)", isAimAssistEnabled, function(v) isAimAssistEnabled = v end)
 createToggle("Enable Silent Aim (on fire)", isSilentAimEnabled, function(v) isSilentAimEnabled = v end)
 createToggle("Enable Trigger Bot", isTriggerBotEnabled, function(v) isTriggerBotEnabled = v end)
 createToggle("Allow Wallbang (selection)", allowWallbang, function(v) allowWallbang = v end)
