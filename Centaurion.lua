@@ -863,7 +863,7 @@ UIS.InputBegan:Connect(function(input, gp)
         mainFrame.Visible = not mainFrame.Visible
         return
     end
-    if input.KeyCode == aimKey and isAimAssistEnabled then
+    if input.UserInputType == aimKey and isAimAssistEnabled then
         while UIS:IsKeyDown(aimKey) do
             local tgt = getBestTarget(allowWallbang)
             if tgt then
